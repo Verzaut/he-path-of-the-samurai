@@ -6,11 +6,11 @@
   <div class="row g-3 mb-2">
     <div class="col-6 col-md-3"><div class="border rounded p-2 text-center">
       <div class="small text-muted">Скорость МКС</div>
-      <div class="fs-4">{{ isset(($iss['payload'] ?? [])['velocity']) ? number_format($iss['payload']['velocity'],0,'',' ') : '—' }}</div>
+      <div class="fs-4 metric-value" id="issSpeed">{{ isset(($iss['payload'] ?? [])['velocity']) ? number_format($iss['payload']['velocity'],0,'',' ') : '—' }}</div>
     </div></div>
     <div class="col-6 col-md-3"><div class="border rounded p-2 text-center">
       <div class="small text-muted">Высота МКС</div>
-      <div class="fs-4">{{ isset(($iss['payload'] ?? [])['altitude']) ? number_format($iss['payload']['altitude'],0,'',' ') : '—' }}</div>
+      <div class="fs-4 metric-value" id="issAlt">{{ isset(($iss['payload'] ?? [])['altitude']) ? number_format($iss['payload']['altitude'],0,'',' ') : '—' }}</div>
     </div></div>
   </div>
 
@@ -78,12 +78,54 @@
             .jwst-slider{position:relative}
             .jwst-track{
               display:flex; gap:.75rem; overflow:auto; scroll-snap-type:x mandatory; padding:.25rem;
+              scroll-behavior: smooth;
             }
             .jwst-item{flex:0 0 180px; scroll-snap-align:start}
-            .jwst-item img{width:100%; height:180px; object-fit:cover; border-radius:.5rem}
-            .jwst-cap{font-size:.85rem; margin-top:.25rem}
-            .jwst-nav{position:absolute; top:40%; transform:translateY(-50%); z-index:2}
+            .jwst-item img{
+              width:100%; height:180px; object-fit:cover; border-radius:.5rem;
+              transition: transform 0.3s ease, opacity 0.3s ease;
+            }
+            .jwst-item img[loading="lazy"] {
+              opacity: 0;
+            }
+            .jwst-item img.loaded {
+              opacity: 1;
+              animation: fadeIn 0.4s ease-out;
+            }
+            .jwst-cap{font-size:.85rem; margin-top:.25rem; transition: color 0.2s ease;}
+            .jwst-nav{
+              position:absolute; top:40%; transform:translateY(-50%); z-index:2;
+              opacity: 0.7;
+              transition: opacity 0.3s ease, transform 0.2s ease;
+            }
+            .jwst-nav:hover {
+              opacity: 1;
+              transform: translateY(-50%) scale(1.1);
+            }
             .jwst-prev{left:-.25rem} .jwst-next{right:-.25rem}
+            
+            /* Скелетон загрузки */
+            .loading-skeleton {
+              display: flex;
+              gap: 0.75rem;
+              padding: 0.25rem;
+            }
+            .loading-skeleton-item {
+              flex: 0 0 180px;
+              height: 180px;
+              background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+              background-size: 200% 100%;
+              animation: shimmer 1.5s infinite;
+              border-radius: 0.5rem;
+            }
+            
+            /* Анимация для метрик */
+            .metric-value {
+              transition: transform 0.3s ease, color 0.3s ease;
+            }
+            .metric-value.updated {
+              animation: pulse 0.5s ease-out;
+            }
           </style>
 
           <div class="jwst-slider">
@@ -111,12 +153,46 @@ document.addEventListener('DOMContentLoaded', async function () {
     const marker = L.marker([lat0||0, lon0||0]).addTo(map).bindPopup('МКС');
 
     const speedChart = new Chart(document.getElementById('issSpeedChart'), {
-      type: 'line', data: { labels: [], datasets: [{ label: 'Скорость', data: [] }] },
-      options: { responsive: true, scales: { x: { display: false } } }
+      type: 'line', 
+      data: { 
+        labels: [], 
+        datasets: [{ 
+          label: 'Скорость', 
+          data: [],
+          borderColor: 'rgb(75, 192, 192)',
+          backgroundColor: 'rgba(75, 192, 192, 0.1)',
+          tension: 0.4
+        }] 
+      },
+      options: { 
+        responsive: true, 
+        animation: {
+          duration: 1000,
+          easing: 'easeInOutQuart'
+        },
+        scales: { x: { display: false } } 
+      }
     });
     const altChart = new Chart(document.getElementById('issAltChart'), {
-      type: 'line', data: { labels: [], datasets: [{ label: 'Высота', data: [] }] },
-      options: { responsive: true, scales: { x: { display: false } } }
+      type: 'line', 
+      data: { 
+        labels: [], 
+        datasets: [{ 
+          label: 'Высота', 
+          data: [],
+          borderColor: 'rgb(255, 99, 132)',
+          backgroundColor: 'rgba(255, 99, 132, 0.1)',
+          tension: 0.4
+        }] 
+      },
+      options: { 
+        responsive: true,
+        animation: {
+          duration: 1000,
+          easing: 'easeInOutQuart'
+        },
+        scales: { x: { display: false } } 
+      }
     });
 
     async function loadTrend() {
@@ -126,15 +202,44 @@ document.addEventListener('DOMContentLoaded', async function () {
         const pts = Array.isArray(js.points) ? js.points.map(p => [p.lat, p.lon]) : [];
         if (pts.length) {
           trail.setLatLngs(pts);
-          marker.setLatLng(pts[pts.length-1]);
+          const lastPoint = pts[pts.length-1];
+          marker.setLatLng(lastPoint);
+          
+          // Плавная анимация перемещения маркера
+          marker.setLatLng(lastPoint, {animate: true, duration: 1.0});
         }
         const t = (js.points||[]).map(p => new Date(p.at).toLocaleTimeString());
+        const velocities = (js.points||[]).map(p => p.velocity);
+        const altitudes = (js.points||[]).map(p => p.altitude);
+        
+        // Обновляем графики с анимацией
         speedChart.data.labels = t;
-        speedChart.data.datasets[0].data = (js.points||[]).map(p => p.velocity);
-        speedChart.update();
+        speedChart.data.datasets[0].data = velocities;
+        speedChart.update('active');
+        
         altChart.data.labels = t;
-        altChart.data.datasets[0].data = (js.points||[]).map(p => p.altitude);
-        altChart.update();
+        altChart.data.datasets[0].data = altitudes;
+        altChart.update('active');
+        
+        // Обновляем метрики с анимацией
+        if (velocities.length > 0) {
+          const speedEl = document.getElementById('issSpeed');
+          const newSpeed = Math.round(velocities[velocities.length - 1]);
+          if (speedEl && speedEl.textContent !== newSpeed.toLocaleString('ru-RU')) {
+            speedEl.textContent = newSpeed.toLocaleString('ru-RU');
+            speedEl.classList.add('updated');
+            setTimeout(() => speedEl.classList.remove('updated'), 500);
+          }
+        }
+        if (altitudes.length > 0) {
+          const altEl = document.getElementById('issAlt');
+          const newAlt = Math.round(altitudes[altitudes.length - 1]);
+          if (altEl && altEl.textContent !== newAlt.toLocaleString('ru-RU')) {
+            altEl.textContent = newAlt.toLocaleString('ru-RU');
+            altEl.classList.add('updated');
+            setTimeout(() => altEl.classList.remove('updated'), 500);
+          }
+        }
       } catch(e) {}
     }
     loadTrend();
@@ -156,24 +261,51 @@ document.addEventListener('DOMContentLoaded', async function () {
   srcSel.addEventListener('change', toggleInputs); toggleInputs();
 
   async function loadFeed(qs){
-    track.innerHTML = '<div class="p-3 text-muted">Загрузка…</div>';
+    // Показываем скелетон загрузки
+    track.innerHTML = '<div class="loading-skeleton">' + 
+      Array(6).fill(0).map(() => '<div class="loading-skeleton-item"></div>').join('') + 
+      '</div>';
     info.textContent= '';
     try{
       const url = '/api/jwst/feed?'+new URLSearchParams(qs).toString();
       const r = await fetch(url);
       const js = await r.json();
       track.innerHTML = '';
-      (js.items||[]).forEach(it=>{
-        const fig = document.createElement('figure');
-        fig.className = 'jwst-item m-0';
-        fig.innerHTML = `
-          <a href="${it.link||it.url}" target="_blank" rel="noreferrer">
-            <img loading="lazy" src="${it.url}" alt="JWST">
-          </a>
-          <figcaption class="jwst-cap">${(it.caption||'').replaceAll('<','&lt;')}</figcaption>`;
-        track.appendChild(fig);
+      
+      // Анимация появления элементов с задержкой
+      (js.items||[]).forEach((it, idx)=>{
+        setTimeout(() => {
+          const fig = document.createElement('figure');
+          fig.className = 'jwst-item m-0';
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.src = it.url;
+          img.alt = 'JWST';
+          img.onload = function() {
+            this.classList.add('loaded');
+          };
+          
+          const link = document.createElement('a');
+          link.href = it.link || it.url;
+          link.target = '_blank';
+          link.rel = 'noreferrer';
+          link.appendChild(img);
+          
+          const caption = document.createElement('figcaption');
+          caption.className = 'jwst-cap';
+          caption.textContent = (it.caption || '').replace(/</g, '&lt;');
+          
+          fig.appendChild(link);
+          fig.appendChild(caption);
+          track.appendChild(fig);
+        }, idx * 50); // Задержка для каскадной анимации
       });
-      info.textContent = `Источник: ${js.source} · Показано ${js.count||0}`;
+      
+      // Показываем информацию с анимацией
+      setTimeout(() => {
+        info.textContent = `Источник: ${js.source} · Показано ${js.count||0}`;
+        info.style.animation = 'fadeIn 0.4s ease-out';
+      }, (js.items?.length || 0) * 50 + 100);
     }catch(e){
       track.innerHTML = '<div class="p-3 text-danger">Ошибка загрузки</div>';
     }
@@ -196,174 +328,3 @@ document.addEventListener('DOMContentLoaded', async function () {
 </script>
 @endsection
 
-    <!-- ASTRO — события -->
-    <div class="col-12 order-first mt-3">
-      <div class="card shadow-sm">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="card-title m-0">Астрономические события (AstronomyAPI)</h5>
-            <form id="astroForm" class="row g-2 align-items-center">
-              <div class="col-auto">
-                <input type="number" step="0.0001" class="form-control form-control-sm" name="lat" value="55.7558" placeholder="lat">
-              </div>
-              <div class="col-auto">
-                <input type="number" step="0.0001" class="form-control form-control-sm" name="lon" value="37.6176" placeholder="lon">
-              </div>
-              <div class="col-auto">
-                <input type="number" min="1" max="30" class="form-control form-control-sm" name="days" value="7" style="width:90px" title="дней">
-              </div>
-              <div class="col-auto">
-                <button class="btn btn-sm btn-primary" type="submit">Показать</button>
-              </div>
-            </form>
-          </div>
-
-          <div class="table-responsive">
-            <table class="table table-sm align-middle">
-              <thead>
-                <tr><th>#</th><th>Тело</th><th>Событие</th><th>Когда (UTC)</th><th>Дополнительно</th></tr>
-              </thead>
-              <tbody id="astroBody">
-                <tr><td colspan="5" class="text-muted">нет данных</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <details class="mt-2">
-            <summary>Полный JSON</summary>
-            <pre id="astroRaw" class="bg-light rounded p-2 small m-0" style="white-space:pre-wrap"></pre>
-          </details>
-        </div>
-      </div>
-    </div>
-
-    <script>
-      document.addEventListener('DOMContentLoaded', () => {
-        const form = document.getElementById('astroForm');
-        const body = document.getElementById('astroBody');
-        const raw  = document.getElementById('astroRaw');
-
-        function normalize(node){
-          const name = node.name || node.body || node.object || node.target || '';
-          const type = node.type || node.event_type || node.category || node.kind || '';
-          const when = node.time || node.date || node.occursAt || node.peak || node.instant || '';
-          const extra = node.magnitude || node.mag || node.altitude || node.note || '';
-          return {name, type, when, extra};
-        }
-
-        function collect(root){
-          const rows = [];
-          (function dfs(x){
-            if (!x || typeof x !== 'object') return;
-            if (Array.isArray(x)) { x.forEach(dfs); return; }
-            if ((x.type || x.event_type || x.category) && (x.name || x.body || x.object || x.target)) {
-              rows.push(normalize(x));
-            }
-            Object.values(x).forEach(dfs);
-          })(root);
-          return rows;
-        }
-
-        async function load(q){
-          body.innerHTML = '<tr><td colspan="5" class="text-muted">Загрузка…</td></tr>';
-          const url = '/api/astro/events?' + new URLSearchParams(q).toString();
-          try{
-            const r  = await fetch(url);
-            const js = await r.json();
-            raw.textContent = JSON.stringify(js, null, 2);
-
-            const rows = collect(js);
-            if (!rows.length) {
-              body.innerHTML = '<tr><td colspan="5" class="text-muted">события не найдены</td></tr>';
-              return;
-            }
-            body.innerHTML = rows.slice(0,200).map((r,i)=>`
-              <tr>
-                <td>${i+1}</td>
-                <td>${r.name || '—'}</td>
-                <td>${r.type || '—'}</td>
-                <td><code>${r.when || '—'}</code></td>
-                <td>${r.extra || ''}</td>
-              </tr>
-            `).join('');
-          }catch(e){
-            body.innerHTML = '<tr><td colspan="5" class="text-danger">ошибка загрузки</td></tr>';
-          }
-        }
-
-        form.addEventListener('submit', ev=>{
-          ev.preventDefault();
-          const q = Object.fromEntries(new FormData(form).entries());
-          load(q);
-        });
-
-        // автозагрузка
-        load({lat: form.lat.value, lon: form.lon.value, days: form.days.value});
-      });
-    </script>
-
-
-{{-- ===== Данный блок ===== --}}
-<div class="card mt-3">
-  <div class="card-header fw-semibold">CMS</div>
-  <div class="card-body">
-    @php
-      try {
-        // «плохо»: запрос из Blade, без кэша, без репозитория
-        $___b = DB::selectOne("SELECT content FROM cms_blocks WHERE slug='dashboard_experiment' AND is_active = TRUE LIMIT 1");
-        echo $___b ? $___b->content : '<div class="text-muted">блок не найден</div>';
-      } catch (\Throwable $e) {
-        echo '<div class="text-danger">ошибка БД: '.e($e->getMessage()).'</div>';
-      }
-    @endphp
-  </div>
-</div>
-
-{{-- ===== CMS-блок из БД (нарочно сырая вставка) ===== --}}
-<div class="card mt-3">
-  <div class="card-header fw-semibold">CMS — блок из БД</div>
-  <div class="card-body">
-    @php
-      try {
-        // «плохо»: запрос из Blade, без кэша, без репозитория
-        $___b = DB::selectOne("SELECT content FROM cms_blocks WHERE slug='dashboard_experiment' AND is_active = TRUE LIMIT 1");
-        echo $___b ? $___b->content : '<div class="text-muted">блок не найден</div>';
-      } catch (\Throwable $e) {
-        echo '<div class="text-danger">ошибка БД: '.e($e->getMessage()).'</div>';
-      }
-    @endphp
-  </div>
-</div>
-
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-  if (window.L && window._issMapTileLayer) {
-    const map  = window._issMap;
-    let   tl   = window._issMapTileLayer;
-    tl.on('tileerror', () => {
-      try {
-        map.removeLayer(tl);
-      } catch(e) {}
-      tl = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: ''});
-      tl.addTo(map);
-      window._issMapTileLayer = tl;
-    });
-  }
-});
-</script>
-
-{{-- ===== CMS-блок из БД (нарочно сырая вставка) ===== --}}
-<div class="card mt-3">
-  <div class="card-header fw-semibold">CMS — блок из БД</div>
-  <div class="card-body">
-    @php
-      try {
-        // «плохо»: запрос из Blade, без кэша, без репозитория
-        $___b = DB::selectOne("SELECT content FROM cms_blocks WHERE slug='dashboard_experiment' AND is_active = TRUE LIMIT 1");
-        echo $___b ? $___b->content : '<div class="text-muted">блок не найден</div>';
-      } catch (\Throwable $e) {
-        echo '<div class="text-danger">ошибка БД: '.e($e->getMessage()).'</div>';
-      }
-    @endphp
-  </div>
-</div>
